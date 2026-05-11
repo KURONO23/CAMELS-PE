@@ -610,7 +610,7 @@ def grafico_barras_atributos(datos: Optional[pd.DataFrame], titulo: str, columna
     )
     fig.update_traces(marker_color=color, textposition="outside")
     fig.update_layout(
-        height=300,
+        height=380,
         yaxis={"categoryorder": "total ascending"},
         margin=dict(l=10, r=10, t=45, b=10),
         showlegend=False,
@@ -805,6 +805,10 @@ with st.sidebar:
             mime="application/pdf",
         )
 
+    st.markdown("### Descargas")
+    descargar_datos_slot = st.empty()
+    descargar_cuenca_slot = st.empty()
+
 if actualizar_drive:
     buscar_archivo_drive.clear()
     descargar_archivo_drive.clear()
@@ -838,43 +842,39 @@ with col_mapa:
     st_folium(mapa, height=620, use_container_width=True)
 
     st.subheader("Atributos de la cuenca")
-    col_attr1, col_attr2, col_attr3 = st.columns(3)
 
-    with col_attr1:
-        try:
-            landcover = leer_landcover_drive()
-            cobertura = preparar_cobertura_landcover(landcover, cuenca_input)
-            fig_cov = grafico_barras_atributos(cobertura, "Cobertura de suelo (%)", "porcentaje", "#2E7D32")
-            if fig_cov is None:
-                st.info("Sin datos de cobertura.")
-            else:
-                st.plotly_chart(fig_cov, use_container_width=True)
-        except Exception as e:
-            st.warning(f"No se pudo leer landcover desde Drive: {e}")
+    try:
+        landcover = leer_landcover_drive()
+        cobertura = preparar_cobertura_landcover(landcover, cuenca_input)
+        fig_cov = grafico_barras_atributos(cobertura, "Cobertura de suelo (%)", "porcentaje", "#2E7D32")
+        if fig_cov is None:
+            st.info("Sin datos de cobertura.")
+        else:
+            st.plotly_chart(fig_cov, use_container_width=True)
+    except Exception as e:
+        st.warning(f"No se pudo leer landcover desde Drive: {e}")
 
-    with col_attr2:
-        try:
-            geologia = leer_geologia_drive()
-            datos_geo = preparar_geologia(geologia, cuenca_input)
-            fig_geo = grafico_barras_atributos(datos_geo, "Atributos geológicos", "valor", "#6D4C41")
-            if fig_geo is None:
-                st.info("Sin datos geológicos.")
-            else:
-                st.plotly_chart(fig_geo, use_container_width=True)
-        except Exception as e:
-            st.warning(f"No se pudo leer geologic desde Drive: {e}")
+    try:
+        geologia = leer_geologia_drive()
+        datos_geo = preparar_geologia(geologia, cuenca_input)
+        fig_geo = grafico_barras_atributos(datos_geo, "Atributos geológicos", "valor", "#6D4C41")
+        if fig_geo is None:
+            st.info("Sin datos geológicos.")
+        else:
+            st.plotly_chart(fig_geo, use_container_width=True)
+    except Exception as e:
+        st.warning(f"No se pudo leer geologic desde Drive: {e}")
 
-    with col_attr3:
-        try:
-            suelos = leer_suelos_drive()
-            datos_suelo = preparar_suelos(suelos, cuenca_input)
-            fig_suelo = grafico_barras_atributos(datos_suelo, "Atributos de suelo (%)", "porcentaje", "#1565C0")
-            if fig_suelo is None:
-                st.info("Sin datos de suelo.")
-            else:
-                st.plotly_chart(fig_suelo, use_container_width=True)
-        except Exception as e:
-            st.warning(f"No se pudo leer soil desde Drive: {e}")
+    try:
+        suelos = leer_suelos_drive()
+        datos_suelo = preparar_suelos(suelos, cuenca_input)
+        fig_suelo = grafico_barras_atributos(datos_suelo, "Atributos de suelo (%)", "porcentaje", "#1565C0")
+        if fig_suelo is None:
+            st.info("Sin datos de suelo.")
+        else:
+            st.plotly_chart(fig_suelo, use_container_width=True)
+    except Exception as e:
+        st.warning(f"No se pudo leer soil desde Drive: {e}")
 
     st.subheader("Serie temporal")
     try:
@@ -948,23 +948,19 @@ with col_tablas:
         except Exception as e:
             st.warning(f"No se pudo leer firmas desde Drive: {e}")
 
-st.divider()
-st.subheader("Descargas")
-
-col_d1, col_d2 = st.columns(2)
-
-with col_d1:
+with descargar_datos_slot:
     if dat_drive is not None and not datos_grafico.empty:
         st.download_button(
             "📥 Descargar datos en Excel",
             data=generar_excel_bytes(datos_grafico),
             file_name=f"Datos_{cuenca_input}_{tipo_dato}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
         )
     else:
-        st.button("📥 Descargar datos en Excel", disabled=True)
+        st.button("📥 Descargar datos en Excel", disabled=True, use_container_width=True)
 
-with col_d2:
+with descargar_cuenca_slot:
     try:
         zip_bytes = generar_zip_shapefile(cuenca_sel, cuenca_input)
         st.download_button(
@@ -972,6 +968,7 @@ with col_d2:
             data=zip_bytes,
             file_name=f"Cuenca_{normalizar_codigo_cuenca(cuenca_input)}.zip",
             mime="application/zip",
+            use_container_width=True,
         )
     except Exception as e:
         st.warning(f"No se pudo preparar la descarga SHP: {e}")
