@@ -275,14 +275,41 @@ def cargar_geodatos():
     estaciones.loc[estaciones["Estacion"].isin(["", "NA", "NAN"]), "Estacion"] = estaciones["gauge_id"]
     cuencas.loc[cuencas["Estacion"].isin(["", "NA", "NAN"]), "Estacion"] = cuencas["gauge_id"]
 
-    if "name_cat" in estaciones.columns:
-        estaciones["Region"] = estaciones["name_cat"].astype(str).str.strip().str.upper()
-    elif "region" in estaciones.columns:
-        estaciones["Region"] = estaciones["region"].astype(str).str.strip().str.upper()
-    elif "Region" in estaciones.columns:
-        estaciones["Region"] = estaciones["Region"].astype(str).str.strip().str.upper()
-    else:
-        estaciones["Region"] = "SIN REGIÓN"
+    # Región y Zonal desde el GPKG corregido.
+    # IMPORTANTE: no usar name_cat como Region, porque name_cat contiene nombres de cuenca.
+    columnas_lower = {str(col).strip().lower(): col for col in estaciones.columns}
+
+    if "region" not in columnas_lower:
+        raise ValueError(
+            "El GPKG de gauges no tiene el campo Region. "
+            "Usa camels_pe_gauges_con_region_zonal.gpkg o agrega ese campo antes de correr el visor."
+        )
+
+    if "zonal" not in columnas_lower:
+        raise ValueError(
+            "El GPKG de gauges no tiene el campo Zonal. "
+            "Usa camels_pe_gauges_con_region_zonal.gpkg o agrega ese campo antes de correr el visor."
+        )
+
+    col_region = columnas_lower["region"]
+    col_zonal = columnas_lower["zonal"]
+
+    estaciones["Region"] = estaciones[col_region].astype(str).str.strip().str.upper()
+    estaciones["Zonal"] = estaciones[col_zonal].astype(str).str.strip().str.upper()
+
+    estaciones.loc[
+        estaciones["Region"].isna()
+        | estaciones["Region"].isin(["", "NA", "NAN", "NONE"]),
+        "Region",
+    ] = "SIN REGIÓN"
+
+    estaciones.loc[
+        estaciones["Zonal"].isna()
+        | estaciones["Zonal"].isin(["", "NA", "NAN", "NONE"]),
+        "Zonal",
+    ] = "SIN ZONAL"
+
+    estaciones = estaciones.sort_values(["Region", "Estacion", "gauge_id"]).reset_index(drop=True)
 
     return estaciones, cuencas, rios
 
@@ -663,14 +690,17 @@ with st.sidebar:
     else:
         estaciones_filtradas = estaciones[estaciones["Region"] == region_input].copy()
 
-    estaciones_filtradas = estaciones_filtradas.sort_values("Estacion")
+    # Orden real por Región y luego por Estación.
+    # Esto evita que el selector se ordene por nombre de cuenca cuando existe name_cat.
+    estaciones_filtradas = estaciones_filtradas.sort_values(["Region", "Estacion", "gauge_id"])
     opciones_gauge = estaciones_filtradas["gauge_id"].dropna().tolist()
 
     def etiqueta_gauge(gid: str) -> str:
         fila = estaciones[estaciones["gauge_id"] == gid]
         if fila.empty:
             return gid
-        return f"{fila.iloc[0]['Estacion']} ({gid})"
+        estacion = fila.iloc[0]["Estacion"]
+        return f"{estacion}"
 
     if not opciones_gauge:
         st.warning("No hay estaciones para la región seleccionada.")
