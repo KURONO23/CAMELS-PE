@@ -242,6 +242,26 @@ def leer_topografia_drive() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=900, show_spinner=False)
+def leer_geologia_drive() -> pd.DataFrame:
+    df = leer_csv_drive_directo(DRIVE_ATRIBUTOS_ID, "geologic_attributes.csv")
+    df = limpiar_nombres_columnas(df)
+    if "gauge_id" not in df.columns:
+        raise ValueError("El archivo geologic_attributes.csv no tiene la columna gauge_id.")
+    df["gauge_id"] = df["gauge_id"].apply(normalizar_gauge_pe)
+    return df
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def leer_suelos_drive() -> pd.DataFrame:
+    df = leer_csv_drive_directo(DRIVE_ATRIBUTOS_ID, "soil_attributes.csv")
+    df = limpiar_nombres_columnas(df)
+    if "gauge_id" not in df.columns:
+        raise ValueError("El archivo soil_attributes.csv no tiene la columna gauge_id.")
+    df["gauge_id"] = df["gauge_id"].apply(normalizar_gauge_pe)
+    return df
+
+
+@st.cache_data(ttl=900, show_spinner=False)
 def leer_csv_timeseries_drive(gauge_id: str) -> Optional[pd.DataFrame]:
     codigo = normalizar_codigo_cuenca(gauge_id)
     nombre_csv = f"PE_{codigo}.csv"
@@ -488,14 +508,114 @@ def preparar_cobertura_landcover(df_landcover: pd.DataFrame, gid: str) -> Option
         fila[columnas_cobertura]
         .melt(var_name="variable", value_name="porcentaje")
         .assign(
-            CobVeg2013=lambda x: x["variable"].map(nombres),
+            Categoria=lambda x: x["variable"].map(nombres),
             porcentaje=lambda x: pd.to_numeric(x["porcentaje"], errors="coerce"),
         )
         .dropna(subset=["porcentaje"])
     )
     tabla = tabla[tabla["porcentaje"] > 0]
-    tabla = tabla[["CobVeg2013", "porcentaje"]].sort_values("porcentaje", ascending=False)
+    tabla = tabla[["Categoria", "porcentaje"]].sort_values("porcentaje", ascending=False)
     return tabla if not tabla.empty else None
+
+
+def preparar_geologia(df_geologia: pd.DataFrame, gid: str) -> Optional[pd.DataFrame]:
+    gid_pe = normalizar_gauge_pe(gid)
+    fila = df_geologia[df_geologia["gauge_id"] == gid_pe]
+    if fila.empty:
+        return None
+
+    columnas = {
+        "geol_class_1st_per": "Geología clase principal",
+        "geol_class_2nd_per": "Geología clase secundaria",
+        "inter_volca_rocks_pe": "Rocas volcánicas intermedias",
+        "geol_porosity": "Porosidad geológica",
+        "geol_permeability": "Permeabilidad geológica",
+    }
+    columnas = {col: nombre for col, nombre in columnas.items() if col in fila.columns}
+    if not columnas:
+        return None
+
+    tabla = (
+        fila[list(columnas.keys())]
+        .melt(var_name="variable", value_name="valor")
+        .assign(
+            Categoria=lambda x: x["variable"].map(columnas),
+            valor=lambda x: pd.to_numeric(x["valor"], errors="coerce"),
+        )
+        .dropna(subset=["valor"])
+    )
+    tabla = tabla[["Categoria", "valor"]].sort_values("valor", ascending=False)
+    return tabla if not tabla.empty else None
+
+
+def preparar_suelos(df_suelos: pd.DataFrame, gid: str) -> Optional[pd.DataFrame]:
+    gid_pe = normalizar_gauge_pe(gid)
+    fila = df_suelos[df_suelos["gauge_id"] == gid_pe]
+    if fila.empty:
+        return None
+
+    columnas = [
+        "inceptisols_perc",
+        "entisols_perc",
+        "alfisols_perc",
+        "ultisols_perc",
+        "aridisols_perc",
+        "gelisols_perc",
+        "oxisols_perc",
+        "mollisols_perc",
+        "vertisols_perc",
+    ]
+    columnas = [c for c in columnas if c in fila.columns]
+    if not columnas:
+        return None
+
+    nombres = {
+        "inceptisols_perc": "Inceptisols",
+        "entisols_perc": "Entisols",
+        "alfisols_perc": "Alfisols",
+        "ultisols_perc": "Ultisols",
+        "aridisols_perc": "Aridisols",
+        "gelisols_perc": "Gelisols",
+        "oxisols_perc": "Oxisols",
+        "mollisols_perc": "Mollisols",
+        "vertisols_perc": "Vertisols",
+    }
+
+    tabla = (
+        fila[columnas]
+        .melt(var_name="variable", value_name="porcentaje")
+        .assign(
+            Categoria=lambda x: x["variable"].map(nombres),
+            porcentaje=lambda x: pd.to_numeric(x["porcentaje"], errors="coerce"),
+        )
+        .dropna(subset=["porcentaje"])
+    )
+    tabla = tabla[tabla["porcentaje"] > 0]
+    tabla = tabla[["Categoria", "porcentaje"]].sort_values("porcentaje", ascending=False)
+    return tabla if not tabla.empty else None
+
+
+def grafico_barras_atributos(datos: Optional[pd.DataFrame], titulo: str, columna_valor: str, color: str):
+    if datos is None or datos.empty:
+        return None
+
+    fig = px.bar(
+        datos,
+        x=columna_valor,
+        y="Categoria",
+        orientation="h",
+        text=datos[columna_valor].map(lambda x: f"{x:.2f}"),
+        labels={columna_valor: "Valor", "Categoria": ""},
+        title=titulo,
+    )
+    fig.update_traces(marker_color=color, textposition="outside")
+    fig.update_layout(
+        height=300,
+        yaxis={"categoryorder": "total ascending"},
+        margin=dict(l=10, r=10, t=45, b=10),
+        showlegend=False,
+    )
+    return fig
 
 # ============================================================
 # MAPA
@@ -656,7 +776,7 @@ with st.sidebar:
         if fila.empty:
             return gid
         estacion = fila.iloc[0]["Estacion"]
-        return f"{estacion}"
+        return f"{estacion} - {gid}"
 
     if not opciones_gauge:
         st.warning("No hay estaciones para la región seleccionada.")
@@ -692,6 +812,8 @@ if actualizar_drive:
     leer_indices_drive.clear()
     leer_firmas_drive.clear()
     leer_topografia_drive.clear()
+    leer_geologia_drive.clear()
+    leer_suelos_drive.clear()
     leer_csv_timeseries_drive.clear()
     st.toast("Datos de Google Drive actualizados.")
 
@@ -714,6 +836,45 @@ with col_mapa:
     st.subheader("Mapa interactivo")
     mapa = crear_mapa(estaciones, cuenca_sel)
     st_folium(mapa, height=620, use_container_width=True)
+
+    st.subheader("Atributos de la cuenca")
+    col_attr1, col_attr2, col_attr3 = st.columns(3)
+
+    with col_attr1:
+        try:
+            landcover = leer_landcover_drive()
+            cobertura = preparar_cobertura_landcover(landcover, cuenca_input)
+            fig_cov = grafico_barras_atributos(cobertura, "Cobertura de suelo (%)", "porcentaje", "#2E7D32")
+            if fig_cov is None:
+                st.info("Sin datos de cobertura.")
+            else:
+                st.plotly_chart(fig_cov, use_container_width=True)
+        except Exception as e:
+            st.warning(f"No se pudo leer landcover desde Drive: {e}")
+
+    with col_attr2:
+        try:
+            geologia = leer_geologia_drive()
+            datos_geo = preparar_geologia(geologia, cuenca_input)
+            fig_geo = grafico_barras_atributos(datos_geo, "Atributos geológicos", "valor", "#6D4C41")
+            if fig_geo is None:
+                st.info("Sin datos geológicos.")
+            else:
+                st.plotly_chart(fig_geo, use_container_width=True)
+        except Exception as e:
+            st.warning(f"No se pudo leer geologic desde Drive: {e}")
+
+    with col_attr3:
+        try:
+            suelos = leer_suelos_drive()
+            datos_suelo = preparar_suelos(suelos, cuenca_input)
+            fig_suelo = grafico_barras_atributos(datos_suelo, "Atributos de suelo (%)", "porcentaje", "#1565C0")
+            if fig_suelo is None:
+                st.info("Sin datos de suelo.")
+            else:
+                st.plotly_chart(fig_suelo, use_container_width=True)
+        except Exception as e:
+            st.warning(f"No se pudo leer soil desde Drive: {e}")
 
     st.subheader("Serie temporal")
     try:
@@ -771,30 +932,6 @@ with col_tablas:
     except Exception as e:
         st.warning(f"No se pudieron leer los parámetros morfométricos desde Drive: {e}")
 
-    st.subheader("Cobertura de suelo (%)")
-    try:
-        landcover = leer_landcover_drive()
-        cobertura = preparar_cobertura_landcover(landcover, cuenca_input)
-        if cobertura is None:
-            st.info("No hay cobertura de suelo para esta cuenca.")
-        else:
-            fig_cov = px.bar(
-                cobertura,
-                x="porcentaje",
-                y="CobVeg2013",
-                orientation="h",
-                text=cobertura["porcentaje"].map(lambda x: f"{x:.1f}%" if x >= 0.5 else f"{x:.4f}%"),
-                labels={"porcentaje": "Porcentaje", "CobVeg2013": "Cobertura"},
-            )
-            fig_cov.update_layout(
-                height=300,
-                yaxis={"categoryorder": "total ascending"},
-                margin=dict(l=10, r=10, t=20, b=10),
-            )
-            st.plotly_chart(fig_cov, use_container_width=True)
-    except Exception as e:
-        st.warning(f"No se pudo leer landcover desde Drive: {e}")
-
     with st.expander("Índices climáticos", expanded=True):
         try:
             indices = leer_indices_drive()
@@ -838,4 +975,3 @@ with col_d2:
         )
     except Exception as e:
         st.warning(f"No se pudo preparar la descarga SHP: {e}")
-
