@@ -57,7 +57,6 @@ LAYER_GAUGES = "camels_pe_gauges"
 RUTA_CATCHMENTS = Path("shp/camels_pe_catchments.gpkg")
 LAYER_CATCHMENTS = "camels_pe_catchments"
 
-RUTA_RIOS = Path("shp/RIOS_Q.shp")
 RUTA_LOGO = Path("logo.jpg")
 RUTA_MANUAL = Path("Manual_de_uso.pdf")
 
@@ -249,18 +248,11 @@ def cargar_geodatos():
         raise FileNotFoundError(f"No existe: {RUTA_GAUGES}")
     if not RUTA_CATCHMENTS.exists():
         raise FileNotFoundError(f"No existe: {RUTA_CATCHMENTS}")
-    if not RUTA_RIOS.exists():
-        raise FileNotFoundError(f"No existe: {RUTA_RIOS}")
-
     estaciones = gpd.read_file(RUTA_GAUGES, layer=LAYER_GAUGES).to_crs(4326)
     cuencas = gpd.read_file(RUTA_CATCHMENTS, layer=LAYER_CATCHMENTS).to_crs(4326)
-    rios = gpd.read_file(RUTA_RIOS).to_crs(4326)
 
     estaciones["geometry"] = estaciones.geometry.make_valid()
     cuencas["geometry"] = cuencas.geometry.make_valid()
-    rios["geometry"] = rios.geometry.make_valid()
-
-    rios = rios[rios.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
 
     estaciones["gauge_id"] = estaciones["gauge_id"].apply(normalizar_gauge_pe)
     cuencas["gauge_id"] = cuencas["gauge_id"].apply(normalizar_gauge_pe)
@@ -311,7 +303,7 @@ def cargar_geodatos():
 
     estaciones = estaciones.sort_values(["Region", "Estacion", "gauge_id"]).reset_index(drop=True)
 
-    return estaciones, cuencas, rios
+    return estaciones, cuencas
 
 # ============================================================
 # SERIES TEMPORALES
@@ -421,7 +413,7 @@ def proyectar_metrico(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return gdf.to_crs(crs_metrico)
 
 
-def calcular_parametros_morfometricos(cuenca: gpd.GeoDataFrame, rios: gpd.GeoDataFrame) -> pd.DataFrame:
+def calcular_parametros_morfometricos(cuenca: gpd.GeoDataFrame) -> pd.DataFrame:
     if cuenca.empty:
         return pd.DataFrame()
 
@@ -430,57 +422,12 @@ def calcular_parametros_morfometricos(cuenca: gpd.GeoDataFrame, rios: gpd.GeoDat
 
     area_km2 = geom.area / 1_000_000
     per_km = geom.boundary.length / 1_000
-
-    long_cauce_km = None
-    densidad = None
-    frecuencia = None
-    rio_principal = "No identificado"
-
-    try:
-        rios_metric = rios.to_crs(cuenca_metric.crs)
-        cauce_dentro = gpd.overlay(rios_metric, cuenca_metric, how="intersection", keep_geom_type=False)
-        cauce_dentro = cauce_dentro[
-            cauce_dentro.geometry.geom_type.isin(["LineString", "MultiLineString"])
-        ].copy()
-
-        if not cauce_dentro.empty:
-            cauce_dentro["long_m"] = cauce_dentro.geometry.length
-            total_km = cauce_dentro["long_m"].sum() / 1000
-            densidad = total_km / area_km2 if area_km2 > 0 else None
-            frecuencia = len(cauce_dentro) / area_km2 if area_km2 > 0 else None
-
-            if "TEXTO_MAP" in cauce_dentro.columns:
-                filtrado = cauce_dentro[
-                    cauce_dentro["TEXTO_MAP"].notna()
-                    & (cauce_dentro["TEXTO_MAP"].astype(str).str.strip() != "")
-                ].copy()
-            else:
-                filtrado = pd.DataFrame()
-
-            if not filtrado.empty:
-                idx = filtrado["long_m"].idxmax()
-                long_cauce_km = float(filtrado.loc[idx, "long_m"] / 1000)
-                rio_principal = str(filtrado.loc[idx, "TEXTO_MAP"])
-            else:
-                idx = cauce_dentro["long_m"].idxmax()
-                long_cauce_km = float(cauce_dentro.loc[idx, "long_m"] / 1000)
-    except Exception:
-        pass
-
-    ancho_prom = area_km2 / long_cauce_km if long_cauce_km and long_cauce_km > 0 else None
     kc = 0.28 * per_km / (area_km2 ** 0.5) if area_km2 and area_km2 > 0 else None
-    ff = ancho_prom / long_cauce_km if ancho_prom and long_cauce_km and long_cauce_km > 0 else None
 
     return tabla_param_val({
         "Área (km²)": area_km2,
         "Perímetro (km)": per_km,
-        "Longitud del cauce mayor (km)": long_cauce_km,
-        "Ancho promedio (km)": ancho_prom,
         "Coef. de compacidad (Kc)": kc,
-        "Factor de forma (Ff)": ff,
-        "Densidad de drenaje (km/km²)": densidad,
-        "Frecuencia de ríos (ríos/km²)": frecuencia,
-        "Río principal (TEXTO_MAP)": rio_principal,
     })
 
 
@@ -533,7 +480,7 @@ def preparar_cobertura_landcover(df_landcover: pd.DataFrame, gid: str) -> Option
 # ============================================================
 
 
-def crear_mapa(estaciones: gpd.GeoDataFrame, cuenca: gpd.GeoDataFrame, rios: gpd.GeoDataFrame) -> folium.Map:
+def crear_mapa(estaciones: gpd.GeoDataFrame, cuenca: gpd.GeoDataFrame) -> folium.Map:
     if not cuenca.empty:
         centroide = cuenca.geometry.iloc[0].centroid
         centro = [centroide.y, centroide.x]
@@ -542,24 +489,12 @@ def crear_mapa(estaciones: gpd.GeoDataFrame, cuenca: gpd.GeoDataFrame, rios: gpd
         centro = [-9.19, -75.02]
         zoom = 5
 
-    mapa = folium.Map(location=centro, zoom_start=zoom, tiles="OpenStreetMap", control_scale=True)
-
-    folium.TileLayer(
-        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr="Esri World Imagery",
-        name="Satélite",
-        overlay=False,
-        control=True,
-    ).add_to(mapa)
-
-    folium.TileLayer("OpenTopoMap", name="Topográfico", overlay=False, control=True).add_to(mapa)
-
-    if not rios.empty:
-        folium.GeoJson(
-            rios.to_json(),
-            name="Ríos",
-            style_function=lambda _: {"color": "blue", "weight": 1},
-        ).add_to(mapa)
+    mapa = folium.Map(
+        location=centro,
+        zoom_start=zoom,
+        tiles="OpenStreetMap",
+        control_scale=True,
+    )
 
     if not cuenca.empty:
         folium.GeoJson(
@@ -591,7 +526,6 @@ def crear_mapa(estaciones: gpd.GeoDataFrame, cuenca: gpd.GeoDataFrame, rios: gpd
             tooltip=f"{row['Estacion']} ({row['gauge_id']})",
         ).add_to(mapa)
 
-    folium.LayerControl(collapsed=False, position="topright").add_to(mapa)
     return mapa
 
 # ============================================================
@@ -673,7 +607,7 @@ def generar_zip_shapefile(cuenca: gpd.GeoDataFrame, gauge_id: str) -> bytes:
 st.title("Visor Hidrológico Del Peru")
 
 try:
-    estaciones, cuencas_gpkg, rios = cargar_geodatos()
+    estaciones, cuencas_gpkg = cargar_geodatos()
 except Exception as e:
     st.error(f"Error al cargar datos geoespaciales: {e}")
     st.stop()
@@ -750,7 +684,7 @@ col_mapa, col_tablas = st.columns([1.35, 1], gap="large")
 
 with col_mapa:
     st.subheader("Mapa interactivo")
-    mapa = crear_mapa(estaciones, cuenca_sel, rios)
+    mapa = crear_mapa(estaciones, cuenca_sel)
     st_folium(mapa, height=620, use_container_width=True)
 
     st.subheader("Serie temporal")
@@ -803,7 +737,7 @@ with col_mapa:
 with col_tablas:
     st.subheader("Parámetros morfométricos")
     try:
-        tabla_parametros = calcular_parametros_morfometricos(cuenca_sel, rios)
+        tabla_parametros = calcular_parametros_morfometricos(cuenca_sel)
         st.dataframe(tabla_parametros, use_container_width=True, hide_index=True)
     except Exception as e:
         st.warning(f"No se pudieron calcular los parámetros morfométricos: {e}")
