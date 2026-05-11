@@ -232,6 +232,16 @@ def leer_firmas_drive() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=900, show_spinner=False)
+def leer_topografia_drive() -> pd.DataFrame:
+    df = leer_csv_drive_directo(DRIVE_ATRIBUTOS_ID, "topographic_attributes.csv")
+    df = limpiar_nombres_columnas(df)
+    if "gauge_id" not in df.columns:
+        raise ValueError("El archivo topographic_attributes.csv no tiene la columna gauge_id.")
+    df["gauge_id"] = df["gauge_id"].apply(normalizar_gauge_pe)
+    return df
+
+
+@st.cache_data(ttl=900, show_spinner=False)
 def leer_csv_timeseries_drive(gauge_id: str) -> Optional[pd.DataFrame]:
     codigo = normalizar_codigo_cuenca(gauge_id)
     nombre_csv = f"PE_{codigo}.csv"
@@ -413,22 +423,34 @@ def proyectar_metrico(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return gdf.to_crs(crs_metrico)
 
 
-def calcular_parametros_morfometricos(cuenca: gpd.GeoDataFrame) -> pd.DataFrame:
-    if cuenca.empty:
-        return pd.DataFrame()
+def tabla_topografica_por_gauge(df_topografia: pd.DataFrame, gid: str) -> pd.DataFrame:
+    gid_pe = normalizar_gauge_pe(gid)
+    fila = df_topografia[df_topografia["gauge_id"] == gid_pe]
 
-    cuenca_metric = proyectar_metrico(cuenca[["geometry"]].copy())
-    geom = cuenca_metric.geometry.iloc[0]
+    if fila.empty:
+        return pd.DataFrame({
+            "Parámetro": ["Parámetros morfométricos"],
+            "Valor": [f"No hay registro para el gauge_id {gid_pe}"],
+        })
 
-    area_km2 = geom.area / 1_000_000
-    per_km = geom.boundary.length / 1_000
-    kc = 0.28 * per_km / (area_km2 ** 0.5) if area_km2 and area_km2 > 0 else None
+    fila = fila.iloc[0]
 
-    return tabla_param_val({
-        "Área (km²)": area_km2,
-        "Perímetro (km)": per_km,
-        "Coef. de compacidad (Kc)": kc,
-    })
+    nombres = {
+        "area": "Área",
+        "perimeter": "Perímetro",
+        "elev_min": "Elevación mínima",
+        "elev_max": "Elevación máxima",
+        "elev_mean": "Elevación media",
+        "elev_median": "Elevación mediana",
+        "slope_mean": "Pendiente media",
+    }
+
+    valores = {}
+    for columna, nombre in nombres.items():
+        if columna in df_topografia.columns:
+            valores[nombre] = pd.to_numeric(fila[columna], errors="coerce")
+
+    return tabla_param_val(valores)
 
 
 def preparar_cobertura_landcover(df_landcover: pd.DataFrame, gid: str) -> Optional[pd.DataFrame]:
@@ -664,8 +686,14 @@ with st.sidebar:
         )
 
 if actualizar_drive:
-    st.cache_data.clear()
-    st.toast("Datos actualizados desde Google Drive.")
+    buscar_archivo_drive.clear()
+    descargar_archivo_drive.clear()
+    leer_landcover_drive.clear()
+    leer_indices_drive.clear()
+    leer_firmas_drive.clear()
+    leer_topografia_drive.clear()
+    leer_csv_timeseries_drive.clear()
+    st.toast("Datos de Google Drive actualizados.")
 
 if isinstance(rango_fechas, tuple) and len(rango_fechas) == 2:
     fecha_ini, fecha_fin = rango_fechas
@@ -737,10 +765,11 @@ with col_mapa:
 with col_tablas:
     st.subheader("Parámetros morfométricos")
     try:
-        tabla_parametros = calcular_parametros_morfometricos(cuenca_sel)
+        topografia = leer_topografia_drive()
+        tabla_parametros = tabla_topografica_por_gauge(topografia, cuenca_input)
         st.dataframe(tabla_parametros, use_container_width=True, hide_index=True)
     except Exception as e:
-        st.warning(f"No se pudieron calcular los parámetros morfométricos: {e}")
+        st.warning(f"No se pudieron leer los parámetros morfométricos desde Drive: {e}")
 
     st.subheader("Cobertura de suelo (%)")
     try:
@@ -809,3 +838,4 @@ with col_d2:
         )
     except Exception as e:
         st.warning(f"No se pudo preparar la descarga SHP: {e}")
+
