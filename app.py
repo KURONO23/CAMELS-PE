@@ -795,7 +795,6 @@ with st.sidebar:
         format="DD/MM/YYYY",
     )
 
-    actualizar_drive = st.button("🔄 Actualizar datos Drive", type="secondary")
 
     if RUTA_MANUAL.exists():
         st.download_button(
@@ -809,17 +808,6 @@ with st.sidebar:
     descargar_datos_slot = st.empty()
     descargar_cuenca_slot = st.empty()
 
-if actualizar_drive:
-    buscar_archivo_drive.clear()
-    descargar_archivo_drive.clear()
-    leer_landcover_drive.clear()
-    leer_indices_drive.clear()
-    leer_firmas_drive.clear()
-    leer_topografia_drive.clear()
-    leer_geologia_drive.clear()
-    leer_suelos_drive.clear()
-    leer_csv_timeseries_drive.clear()
-    st.toast("Datos de Google Drive actualizados.")
 
 if isinstance(rango_fechas, tuple) and len(rango_fechas) == 2:
     fecha_ini, fecha_fin = rango_fechas
