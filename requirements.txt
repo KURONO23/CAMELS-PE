@@ -1,0 +1,12 @@
+streamlit
+pandas
+geopandas
+plotly
+folium
+streamlit-folium
+google-api-python-client
+google-auth
+openpyxl
+pyogrio
+shapely
+fiona
