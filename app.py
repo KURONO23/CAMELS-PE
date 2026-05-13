@@ -795,11 +795,25 @@ def generar_excel_bytes(df: pd.DataFrame) -> bytes:
 
 
 def generar_zip_shapefile(cuenca: gpd.GeoDataFrame, gauge_id: str) -> bytes:
+    cuenca_limpia = limpiar_poligonos_para_mapa(cuenca)
+
+    if cuenca_limpia.empty:
+        raise ValueError("La cuenca no tiene geometría poligonal válida para exportar a SHP.")
+
+    # Shapefile no soporta GeometryCollection. Se exportan solo Polygon/MultiPolygon.
+    cuenca_limpia = cuenca_limpia.to_crs(4326).copy()
+
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_path = Path(tmpdir)
         nombre_base = f"Cuenca_{normalizar_codigo_cuenca(gauge_id)}"
         ruta_shp = tmpdir_path / f"{nombre_base}.shp"
-        cuenca.to_file(ruta_shp, driver="ESRI Shapefile")
+
+        cuenca_limpia.to_file(
+            ruta_shp,
+            driver="ESRI Shapefile",
+            geometry_type="Polygon",
+            encoding="utf-8",
+        )
 
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1037,4 +1051,3 @@ with descargar_cuenca_slot:
         )
     except Exception as e:
         st.warning(f"No se pudo preparar la descarga SHP: {e}")
-
