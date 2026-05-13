@@ -650,9 +650,37 @@ def grafico_barras_atributos(datos: Optional[pd.DataFrame], titulo: str, columna
 # ============================================================
 
 
+def limpiar_poligonos_para_mapa(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Limpia geometrías antes de enviarlas a Folium.
+
+    Algunas cuencas pueden convertirse en GeometryCollection después de make_valid().
+    Folium puede fallar con esas geometrías porque no siempre tienen la clave
+    coordinates en el GeoJSON. Por eso se conservan solo Polygon/MultiPolygon.
+    """
+    if gdf is None or gdf.empty:
+        return gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs="EPSG:4326")
+
+    salida = gdf.copy()
+    salida = salida[salida.geometry.notna()].copy()
+    salida = salida[~salida.geometry.is_empty].copy()
+
+    if salida.empty:
+        return salida
+
+    salida["geometry"] = salida.geometry.make_valid()
+    salida = salida.explode(index_parts=False).reset_index(drop=True)
+    salida = salida[salida.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
+    salida = salida[salida.geometry.notna()].copy()
+    salida = salida[~salida.geometry.is_empty].copy()
+
+    return salida
+
+
 def crear_mapa(estaciones: gpd.GeoDataFrame, cuenca: gpd.GeoDataFrame) -> folium.Map:
-    if not cuenca.empty:
-        centroide = cuenca.geometry.iloc[0].centroid
+    cuenca_mapa = limpiar_poligonos_para_mapa(cuenca)
+
+    if not cuenca_mapa.empty:
+        centroide = cuenca_mapa.geometry.union_all().centroid
         centro = [centroide.y, centroide.x]
         zoom = 9
     else:
@@ -666,11 +694,14 @@ def crear_mapa(estaciones: gpd.GeoDataFrame, cuenca: gpd.GeoDataFrame) -> folium
         control_scale=True,
     )
 
-    if not cuenca.empty:
+    if not cuenca_mapa.empty:
+        campos_tooltip = [c for c in ["Estacion", "gauge_id"] if c in cuenca_mapa.columns]
+        tooltip = folium.GeoJsonTooltip(fields=campos_tooltip) if campos_tooltip else None
+
         folium.GeoJson(
-            cuenca.to_json(),
+            cuenca_mapa.to_json(),
             name="Cuenca",
-            tooltip=folium.GeoJsonTooltip(fields=["Estacion", "gauge_id"]),
+            tooltip=tooltip,
             style_function=lambda _: {
                 "color": "black",
                 "weight": 2,
@@ -679,7 +710,7 @@ def crear_mapa(estaciones: gpd.GeoDataFrame, cuenca: gpd.GeoDataFrame) -> folium
             },
         ).add_to(mapa)
 
-        xmin, ymin, xmax, ymax = cuenca.total_bounds
+        xmin, ymin, xmax, ymax = cuenca_mapa.total_bounds
         mapa.fit_bounds([[ymin, xmin], [ymax, xmax]])
 
     estaciones_pts = estaciones.copy()
