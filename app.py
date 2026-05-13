@@ -414,6 +414,34 @@ def agregar_serie(df: Optional[pd.DataFrame], frecuencia: str, modo: str = "mean
     return out
 
 
+def agregar_cortes_por_vacios(df: pd.DataFrame, frecuencia: str) -> pd.DataFrame:
+    """Evita que Plotly una con una línea recta periodos sin datos."""
+    if df is None or df.empty or "Fecha" not in df.columns:
+        return df
+
+    datos = df.copy()
+    datos["Fecha"] = pd.to_datetime(datos["Fecha"])
+
+    if "Variable" not in datos.columns:
+        datos["Variable"] = "Serie"
+
+    max_gap = {
+        "Diario": pd.Timedelta(days=2),
+        "Mensual": pd.Timedelta(days=40),
+        "Anual": pd.Timedelta(days=370),
+    }.get(frecuencia, pd.Timedelta(days=2))
+
+    partes = []
+    for variable, grupo in datos.groupby("Variable", dropna=False):
+        grupo = grupo.sort_values("Fecha").copy()
+        grupo["_gap"] = grupo["Fecha"].diff().gt(max_gap).fillna(False)
+        grupo["_segmento_id"] = grupo["_gap"].cumsum()
+        grupo["Segmento"] = grupo["Variable"].astype(str) + "_" + grupo["_segmento_id"].astype(str)
+        partes.append(grupo.drop(columns=["_gap", "_segmento_id"]))
+
+    return pd.concat(partes, ignore_index=True)
+
+
 def tabla_desde_excel_por_gauge(df_excel: pd.DataFrame, gid: str, titulo_no_registro: str) -> pd.DataFrame:
     gid_pe = normalizar_gauge_pe(gid)
     fila = df_excel[df_excel["gauge_id"] == gid_pe]
@@ -690,7 +718,9 @@ def construir_datos_grafico(dat_drive: pd.DataFrame, tipo: str, frecuencia: str,
             df = df.set_index("Fecha").resample(regla).mean().reset_index()
 
         largo = df.melt(id_vars="Fecha", var_name="Variable", value_name="Valor")
-        return largo.dropna(subset=["Valor"]), "line", "°C"
+        largo = largo.dropna(subset=["Valor"])
+        largo = agregar_cortes_por_vacios(largo, frecuencia)
+        return largo, "line", "°C"
 
     if tipo == "Caudales":
         qobs = extraer_serie_desde_df(dat_drive, RUTA_QOBS, fecha_ini, fecha_fin)
@@ -704,7 +734,9 @@ def construir_datos_grafico(dat_drive: pd.DataFrame, tipo: str, frecuencia: str,
             df = df.set_index("Fecha").resample(regla).mean().reset_index()
 
         largo = df.melt(id_vars="Fecha", var_name="Variable", value_name="Valor")
-        return largo.dropna(subset=["Valor"]), "line", "mm/día"
+        largo = largo.dropna(subset=["Valor"])
+        largo = agregar_cortes_por_vacios(largo, frecuencia)
+        return largo, "line", "mm/día"
 
     config = {
         "Precipitacion": (RUTA_PREC, "sum", "bar", "mm"),
@@ -717,7 +749,10 @@ def construir_datos_grafico(dat_drive: pd.DataFrame, tipo: str, frecuencia: str,
     serie = agregar_serie(serie, frecuencia, modo=modo)
     if serie is None:
         return pd.DataFrame(), tipo_grafico, unidad
-    return serie.dropna(subset=["Valor"]), tipo_grafico, unidad
+    serie = serie.dropna(subset=["Valor"])
+    if tipo_grafico == "line":
+        serie = agregar_cortes_por_vacios(serie, frecuencia)
+    return serie, tipo_grafico, unidad
 
 
 def generar_excel_bytes(df: pd.DataFrame) -> bytes:
@@ -884,11 +919,20 @@ with col_mapa:
         else:
             titulo = f"{tipo_dato} ({frecuencia}) - Estación: {etiqueta_gauge(cuenca_input)}"
             if "Variable" in datos_grafico.columns:
+                colores_series = {
+                    "Observado": "red",
+                    "Simulado": "blue",
+                    "Tmin": "blue",
+                    "Tmed": "red",
+                    "Tmax": "orange",
+                }
                 fig = px.line(
                     datos_grafico,
                     x="Fecha",
                     y="Valor",
                     color="Variable",
+                    line_group="Segmento" if "Segmento" in datos_grafico.columns else None,
+                    color_discrete_map=colores_series,
                     title=titulo,
                     labels={"Valor": unidad, "Fecha": "Fecha"},
                 )
@@ -905,9 +949,11 @@ with col_mapa:
                     datos_grafico,
                     x="Fecha",
                     y="Valor",
+                    line_group="Segmento" if "Segmento" in datos_grafico.columns else None,
                     title=titulo,
                     labels={"Valor": unidad, "Fecha": "Fecha"},
                 )
+                fig.update_traces(line=dict(color="blue"))
             fig.update_layout(height=360, margin=dict(l=10, r=10, t=55, b=10))
             st.plotly_chart(fig, use_container_width=True)
 
@@ -960,3 +1006,4 @@ with descargar_cuenca_slot:
         )
     except Exception as e:
         st.warning(f"No se pudo preparar la descarga SHP: {e}")
+
